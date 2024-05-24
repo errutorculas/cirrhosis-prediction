@@ -1,0 +1,355 @@
+---
+title: "cirrhosis-prediction"
+author: "Erru Torculas"
+date: "2023-12-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Cirrhosis Prediction
+
+Cirrhosis is a late stage of scarring (fibrosis) of the liver caused by many forms of liver diseases and conditions, such as hepatitis and chronic alcoholism. The following data contains the information collected from the Mayo Clinic trial in primary biliary cirrhosis (PBC) of the liver conducted between 1974 and 1984. A description of the clinical background for the trial and the covariates recorded here is in Chapter 0, especially Section 0.2 of Fleming and Harrington, Counting
+
+\
+Processes and Survival Analysis, Wiley, 1991. A more extended discussion can be found in Dickson, et al., Hepatology 10:1-7 (1989) and in Markus, et al., N Eng J of Med 320:1709-13 (1989).
+
+A total of 424 PBC patients, referred to Mayo Clinic during that ten-year interval, met eligibility criteria for the randomized placebo-controlled trial of the drug D-penicillamine. The first 312 cases in the dataset participated in the randomized trial and contain largely complete data. The additional 112 cases did not participate in the clinical trial but consented to have basic measurements recorded and to be followed for survival. Six of those cases were lost to follow-up shortly after diagnosis, so the data here are on an additional 106 cases as well as the 312 randomized participants.
+
+#### Objectives
+
+1\. To build a model that will classify images in detecting the Liver Cirrhosis using Liver Ultrasound Data.   
+
+2\. To compare or trade off four algorithms such as Logistic Regression (LR), Support Vector Machine (SVM), Multilayer Perceptron (MLP), and Convolutional Neural Networks (CNN) that is suitable in in detecting the Liver Cirrhosis using Liver Ultrasound Data.  
+
+3\. To test the accuracy of four algorithms such as Logistic Regression (LR), Support Vector Machine (SVM), Multilayer Perceptron (MLP), and Convolutional Neural Networks (CNN) that will be fit in to detect Liver Cirrhosis Detection using Liver Ultrasound Data
+
+## 1 - Packages
+
+```{r}
+#install.packages("dplyr")
+
+library(dplyr)
+library(corrplot)
+library(gplots)
+library(tidyverse)
+library(finalfit)
+library(caret)
+library(randomForest)
+library(ggplot2)
+library(e1071)
+library(RSNNS)
+library(tensorflow)
+library(keras)
+library(smotefamily)
+library(class)
+library(JOUSBoost)
+library(ada)
+library(rpart)
+
+
+library(reticulate)
+use_python("/usr/local/bin/python3")
+```
+
+## 2 - Data Preparation & EDA
+
+```{r}
+cirrhosis_data <- read.csv("input/cirrhosis.csv")
+
+print(head(cirrhosis_data))
+```
+
+```{r}
+cirrhosis_data <- cirrhosis_data %>%
+  select(-ID)
+```
+
+```{r}
+str(cirrhosis_data)
+```
+
+```{r}
+summary(cirrhosis_data)
+```
+
+#### Handling Missing Values
+
+```{r}
+# drop the 6 rows with missing 'Stage'
+cirrhosis_data <- cirrhosis_data[complete.cases(cirrhosis_data$Stage), ]
+
+# Numerical columns --> Median
+# Impute missing values in numerical columns with the median.
+numerical_columns <- sapply(cirrhosis_data, is.numeric)
+
+for (c in names(cirrhosis_data[, numerical_columns])) {
+  cirrhosis_data[, c] <- ifelse(is.na(cirrhosis_data[, c]), median(cirrhosis_data[, c], na.rm = TRUE), cirrhosis_data[, c])
+}
+
+# Categorical columns --> Most Frequent
+# Impute missing values in categorical columns with the most frequent value
+categorical_columns <- sapply(cirrhosis_data, is.factor)
+
+for (c in names(cirrhosis_data[, categorical_columns])) {
+  cirrhosis_data[, c] <- ifelse(is.na(cirrhosis_data[, c]), levels(cirrhosis_data[, c])[which.max(table(cirrhosis_data[, c]))], cirrhosis_data[, c])
+}
+
+# Convert 'Stage' to integer
+cirrhosis_data$Stage <- as.integer(cirrhosis_data$Stage)
+
+cirrhosis_data <- na.omit(cirrhosis_data)
+```
+
+#### Missing Values
+
+```{r}
+summary(cirrhosis_data)
+```
+
+#### Recode and Mutate Data
+
+```{r}
+cirrhosis_data <- cirrhosis_data %>%
+  mutate(
+    Sex = recode(Sex, 'M' = 0, 'F' = 1),
+    Ascites = recode(Ascites, 'N' = 0, 'Y' = 1),
+    Drug = recode(Drug, 'D-penicillamine' = 0, 'Placebo' = 1),
+    Hepatomegaly = recode(Hepatomegaly, 'N' = 0, 'Y' = 1),
+    Spiders = recode(Spiders, 'N' = 0, 'Y' = 1),
+    Edema = recode(Edema, 'N' = 0, 'Y' = 1, 'S' = -1),
+    Status = recode(Status, 'C' = 0, 'CL' = 1, 'D' = -1),
+  )
+```
+
+```{r}
+str(cirrhosis_data)
+```
+
+## 3 - Preprocessing Data
+
+```{r}
+#Upsampling
+balancedData <- SMOTE(
+  X = cirrhosis_data, 
+  target = cirrhosis_data$Stage, 
+  K = 3)
+
+#Standardize
+scaledData <- balancedData$data
+```
+
+```{r}
+X <- subset(scaledData, select = -c(Status, N_Days, Stage, class))
+y <- scaledData$Stage
+
+X_matrix <- as.matrix(sapply(X, as.numeric))
+```
+
+```{r}
+#Splitting the data 80/20
+set.seed(23)
+split <- createDataPartition(scaledData$Stage, p = 0.8, list = FALSE)
+X_train <- X_matrix[split, ]
+X_test <- X_matrix[-split, ]
+y_train <- y[split]
+y_test <- y[-split]
+```
+
+## 4 - Modelling
+
+### Random Forest
+
+```{r}
+rf_model <- randomForest(x = X_train, y = factor(y_train), ntree = 500)
+
+# Make predictions on the test set
+predictions <- predict(rf_model, newdata = X_test)
+
+# Evaluate the model
+conf_matrix <- table(predictions, y_test)
+conf_matrix
+
+accuracy <- sum(diag(conf_matrix))/length(predictions)
+sprintf("Accuracy: %.2f%%", accuracy*100)
+
+# Feature importance
+importance(rf_model)
+```
+
+### SVM
+
+```{r}
+svm_model = svm(x = X_train, 
+                y = y_train,
+                type = 'C-classification',
+                kernel = 'linear') 
+
+# Make predictions on the test set
+predictions <- predict(svm_model, newdata = X_test)
+
+# Evaluate the model
+conf_matrix <- table(predictions, y_test)
+conf_matrix
+
+accuracy <- sum(diag(conf_matrix))/length(predictions)
+sprintf("Accuracy: %.2f%%", accuracy*100)
+```
+
+### KNN
+
+```{r}
+knn_model = knn(train = X_train,
+                test = X_test,
+                cl = y_train,
+                k = 5)
+
+# Make predictions on the test set
+predictions <- as.factor(knn_model)
+
+# Evaluate the model
+conf_matrix <- table(predictions, y_test)
+conf_matrix
+
+accuracy <- sum(diag(conf_matrix))/length(predictions)
+sprintf("Accuracy: %.2f%%", accuracy*100)
+```
+
+### Logistic Regression
+
+```{r}
+# Fit Logistic Regression model
+
+df_Xtrain <- as.data.frame(X_train)
+df_ytrain <- as.data.frame(y_train)
+
+logistic_model <- glm(as.factor(y_train) ~ ., family = "binomial", data = cbind(df_ytrain, df_Xtrain))
+
+# Make predictions on the test set
+y_pred_probs <- predict(logistic_model, newdata = data.frame(X_test), type = "response")
+predictions <- ifelse(y_pred_probs > 0.5, 1, 0)  # Binary classification threshold
+
+
+# Evaluate the model
+conf_matrix <- table(predictions, y_test)
+conf_matrix
+
+accuracy <- sum(diag(conf_matrix))/length(predictions)
+sprintf("Accuracy: %.2f%%", accuracy*100)
+```
+
+### Adaboost
+
+```{r}
+# Convert response variable to binary (-1, 1)
+y_train_binary <- ifelse(y_train == "Class1", -1, 1)
+y_test_binary <- ifelse(y_test == "Class1", -1, 1)
+                        
+# Fit AdaBoost model
+adaboost_model <- adaboost(X_train, y_train_binary, tree_depth = 3, n_rounds = 50)
+
+predictions <- predict(adaboost_model, X = X_train, newdata = X_test)
+
+predicted_classes <- ifelse(predictions == -1, "Class1", "Class2")
+
+# Evaluate the model
+conf_matrix <- table(predicted_classes, y_train)
+conf_matrix
+
+accuracy <- sum(diag(conf_matrix))/length(predictions)
+sprintf("Accuracy: %.2f%%", accuracy*100)
+```
+
+### Decision Tree
+
+```{r}
+# Create a decision tree model
+tree_model <- rpart(y_train ~ ., data = data.frame(cbind(X_train, y_train)))
+
+# Make predictions on the test set
+predictions <- predict(tree_model, newdata = data.frame(X_test))
+
+# Evaluate the model
+conf_matrix <- table(predictions, y_test)
+conf_matrix
+
+accuracy <- sum(diag(conf_matrix))/length(predictions)
+sprintf("Accuracy: %.2f%%", accuracy*100)
+```
+
+```{r}
+# dataframe to matrix
+
+matrixX_train <- as.matrix(X_train)
+matrixy_train <- as.matrix(y_train)
+matrixX_test <- as.matrix(X_test)
+matrixy_test <- as.matrix(y_test)
+```
+
+### MLP
+
+```{r}
+model_mlp <- keras_model_sequential()
+input_shape <- dim(X_train)[2]
+  
+model_mlp %>% 
+  layer_dense(units = 32, activation = 'relu', input_shape = input_shape) %>% 
+  layer_dense(units = 64, activation = 'relu') %>% 
+  layer_dense(units = 32, activation = 'relu') %>% 
+  layer_dense(units = 5, activation = 'softmax') %>%
+  compile(
+    optimizer = 'adam', 
+    loss = 'sparse_categorical_crossentropy', 
+    metrics = c('accuracy'))
+
+summary(model_mlp)
+```
+
+```{r}
+model_mlp %>% fit(matrixX_train, matrixy_train, epochs = 20, validation_data = list(matrixX_test, matrixy_test))
+
+score <- model_mlp %>% evaluate(matrixX_test, matrixy_test)
+score
+```
+
+### CNN
+
+```{r}
+CNNmodel <- keras_model_sequential()
+  
+CNNmodel %>%
+  layer_conv_1d(filters = 32, kernel_size = 3, padding = 'same', activation = 'relu', input_shape = c(16, 1)) %>%
+  layer_max_pooling_1d(pool_size = 2) %>%
+  layer_conv_1d(filters = 64, kernel_size = 3, padding = 'same', activation = 'relu') %>%
+  layer_max_pooling_1d(pool_size = 2) %>%
+  layer_conv_1d(filters = 32, kernel_size = 3, padding = 'same', activation = 'relu') %>%
+  layer_max_pooling_1d(pool_size = 2) %>%
+  layer_dropout(0.25) %>%
+  layer_flatten() %>%
+  layer_dense(units = 16, activation = 'relu') %>%
+  layer_dense(units = 5, activation = 'softmax') %>% 
+  compile(
+    loss = 'sparse_categorical_crossentropy', 
+    optimizer = 'adam', 
+    metrics = 'accuracy')
+summary(CNNmodel)
+
+```
+
+```{r}
+CNNmodel %>%
+  fit(
+    x = matrixX_train, 
+    y = matrixy_train, 
+    epochs = 20,
+    validation_data = list(matrixX_test, matrixy_test))
+```
+
+```{r}
+CNNmodel %>% evaluate(matrixX_test, matrixy_test)
+predictionsTest <- CNNmodel %>% evaluate(matrixX_test, matrixy_test)
+
+predictionsTest
+```
